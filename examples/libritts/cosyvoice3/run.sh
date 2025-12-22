@@ -2,11 +2,11 @@
 # Copyright 2024 Alibaba Inc. All Rights Reserved.
 . ./path.sh || exit 1;
 
-stage=-1
-stop_stage=3
+stage=5
+stop_stage=5
 
 data_url=www.openslr.org/resources/60
-data_dir=/mnt/lyuxiang.lx/data/tts/openslr/libritts
+data_dir=/workspace/CosyVoice/data
 pretrained_model_dir=../../../pretrained_models/CosyVoice3-0.5B
 
 if [ ${stage} -le -1 ] && [ ${stop_stage} -ge -1 ]; then
@@ -16,17 +16,22 @@ if [ ${stage} -le -1 ] && [ ${stop_stage} -ge -1 ]; then
   done
 fi
 
+# 自訂資料集目錄（修改這裡）
+TRAIN_SETS="train"
+VALID_SETS="test"
+ALL_SETS="$TRAIN_SETS $VALID_SETS"
+
 if [ ${stage} -le 0 ] && [ ${stop_stage} -ge 0 ]; then
   echo "Data preparation, prepare wav.scp/text/utt2spk/spk2utt"
-  for x in train-clean-100 train-clean-360 train-other-500 dev-clean dev-other test-clean test-other; do
+  for x in $ALL_SETS; do
     mkdir -p data/$x
-    python local/prepare_data.py --src_dir $data_dir/LibriTTS/$x --des_dir data/$x --instruct
+    python local/prepare_data.py --src_dir $data_dir/$x --des_dir data/$x --instruct
   done
 fi
 
 if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
   echo "Extract campplus speaker embedding, you will get spk2embedding.pt and utt2embedding.pt in data/$x dir"
-  for x in train-clean-100 train-clean-360 train-other-500 dev-clean dev-other test-clean test-other; do
+  for x in $ALL_SETS; do
     tools/extract_embedding.py --dir data/$x \
       --onnx_path $pretrained_model_dir/campplus.onnx
   done
@@ -34,7 +39,7 @@ fi
 
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
   echo "Extract discrete speech token, you will get utt2speech_token.pt in data/$x dir"
-  for x in train-clean-100 train-clean-360 train-other-500 dev-clean dev-other test-clean test-other; do
+  for x in $ALL_SETS; do
     tools/extract_speech_token.py --dir data/$x \
       --onnx_path $pretrained_model_dir/speech_tokenizer_v3.onnx
   done
@@ -42,7 +47,7 @@ fi
 
 if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
   echo "Prepare required parquet format data, you should have prepared wav.scp/text/utt2spk/spk2utt/utt2embedding.pt/spk2embedding.pt/utt2speech_token.pt"
-  for x in train-clean-100 train-clean-360 train-other-500 dev-clean dev-other test-clean test-other; do
+  for x in $ALL_SETS; do
     mkdir -p data/$x/parquet
     tools/make_parquet_list.py --num_utts_per_parquet 1000 \
       --num_processes 10 \
@@ -53,7 +58,7 @@ if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
 fi
 
 # train llm
-export CUDA_VISIBLE_DEVICES="0,1,2,3"
+export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5"
 num_gpus=$(echo $CUDA_VISIBLE_DEVICES | awk -F "," '{print NF}')
 job_id=1986
 dist_backend="nccl"
@@ -65,8 +70,15 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
   if [ $train_engine == 'deepspeed' ]; then
     echo "Notice deepspeed has its own optimizer config. Modify conf/ds_stage2.json if necessary"
   fi
-  cat data/{train-clean-100,train-clean-360,train-other-500}/parquet/data.list > data/train.data.list
-  cat data/{dev-clean,dev-other}/parquet/data.list > data/dev.data.list
+  # 合併訓練/驗證資料列表
+  > data/train.data.list
+  for x in $TRAIN_SETS; do
+    cat data/$x/parquet/data.list >> data/train.data.list
+  done
+  > data/dev.data.list
+  for x in $VALID_SETS; do
+    cat data/$x/parquet/data.list >> data/dev.data.list
+  done
   # NOTE will update llm/hift training later
   for model in llm flow hifigan; do
     torchrun --nnodes=1 --nproc_per_node=$num_gpus \

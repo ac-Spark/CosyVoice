@@ -42,9 +42,22 @@ def init_distributed(args):
     rank = int(os.environ.get('RANK', 0))
     logging.info('training on multiple gpus, this gpu {}'.format(local_rank) +
                  ', rank {}, world_size {}'.format(rank, world_size))
+
+    # NCCL 環境變數設定，防止 P2P 和 IB 連線問題（Docker 環境或多 GPU 常見）
+    if 'NCCL_P2P_DISABLE' not in os.environ:
+        os.environ['NCCL_P2P_DISABLE'] = '1'
+    if 'NCCL_IB_DISABLE' not in os.environ:
+        os.environ['NCCL_IB_DISABLE'] = '1'
+    if 'NCCL_NET' not in os.environ:
+        os.environ['NCCL_NET'] = 'Socket'
+
     if args.train_engine == 'torch_ddp':
         torch.cuda.set_device(local_rank)
-        dist.init_process_group(args.dist_backend)
+        # 設定 30 分鐘的超時，防止在保存模型或 barrier 同步時其他進程超時
+        dist.init_process_group(
+            args.dist_backend,
+            timeout=datetime.timedelta(minutes=30)
+        )
     else:
         deepspeed.init_distributed(dist_backend=args.dist_backend)
     return world_size, local_rank, rank

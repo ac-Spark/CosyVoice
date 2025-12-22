@@ -48,4 +48,8 @@ RUN conda activate ${VENV} && conda install -y -c conda-forge pynini==2.1.5
 RUN conda activate ${VENV} && cd CosyVoice && \
     pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host=mirrors.aliyun.com --no-cache-dir
 
+# 安裝模型下載工具
+RUN conda activate ${VENV} && \
+    pip install huggingface_hub modelscope -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host=mirrors.aliyun.com --no-cache-dir
+
 WORKDIR /workspace/CosyVoice

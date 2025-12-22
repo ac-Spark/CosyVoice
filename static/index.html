@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CosyVoice3 Studio</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/wavesurfer.js@7"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#10b981',
+                        secondary: '#059669',
+                        dark: '#0f172a',
+                        surface: '#1e293b',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+        .slider-thumb::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #10b981;
+            cursor: pointer;
+        }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #1e293b; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+        audio.custom-audio {
+            filter: invert(1) hue-rotate(180deg) saturate(0.5);
+            border-radius: 0.5rem;
+        }
+    </style>
+</head>
+<body class="bg-dark text-slate-200 h-screen overflow-hidden flex flex-col">
+
+    <div id="app" class="flex flex-1 h-full">
+        <!-- Sidebar -->
+        <aside class="w-80 bg-surface border-r border-slate-700 flex flex-col h-full custom-scrollbar overflow-y-auto">
+            <div class="p-6 border-b border-slate-700">
+                <h1 class="text-2xl font-bold text-white flex items-center gap-2">
+                    <i class="ph ph-waveform text-primary"></i> CosyVoice3
+                </h1>
+                <p class="text-xs text-slate-400 mt-1">跨語種語音複刻</p>
+            </div>
+
+            <div class="p-6 space-y-6 flex-1">
+                <!-- 模型選擇 -->
+                <div>
+                    <label class="text-sm font-semibold text-slate-300 mb-2 block flex items-center gap-2">
+                        <i class="ph ph-cpu"></i> 模型選擇
+                    </label>
+                    <div class="flex items-center gap-2">
+                        <select v-model="selectedModel" @change="changeModel" class="flex-1 bg-dark border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary transition-colors cursor-pointer">
+                            <option v-for="m in models" :value="m.name">{{ m.name }}</option>
+                        </select>
+                        <button @click="refreshModels" title="重新整理" class="h-[38px] w-[38px] bg-surface border border-slate-600 hover:border-primary rounded-lg text-slate-400 hover:text-primary transition-all flex items-center justify-center">
+                            <i class="ph ph-arrows-clockwise"></i>
+                        </button>
+                    </div>
+                    <p class="text-xs text-slate-500 mt-2" v-if="loadingModel">
+                        <i class="ph ph-spinner animate-spin"></i> 載入模型中...
+                    </p>
+                </div>
+
+                <!-- 參考音訊 -->
+                <div>
+                    <label class="text-sm font-semibold text-slate-300 mb-2 block flex items-center gap-2">
+                        <i class="ph ph-microphone"></i> 參考音訊
+                    </label>
+
+                    <!-- 預設範例選擇 -->
+                    <div class="mb-3">
+                        <select v-model="serverPromptPath" class="w-full bg-dark border border-slate-600 rounded-lg px-3 py-2 text-sm focus:border-primary focus:outline-none">
+                            <option value="asset/Hayley.wav">Hayley</option>
+                            <option value="asset/sample_prompt.wav">Sample Prompt</option>                            
+                            <option value="asset/cross_lingual_prompt.wav">Cross-lingual 範例</option>
+                            <option value="asset/zero_shot_prompt.wav">Zero-shot 範例</option>
+                        </select>
+                    </div>
+
+                    <!-- 自訂上傳 -->
+                    <div v-if="!promptFile"
+                        class="border-2 border-dashed border-slate-600 rounded-lg p-3 text-center cursor-pointer hover:border-primary transition-colors"
+                        @click="$refs.fileInput.click()"
+                        @dragover.prevent
+                        @drop.prevent="handleDrop">
+                        <input type="file" ref="fileInput" @change="handleFileSelect" class="hidden" accept="audio/*">
+                        <div class="text-slate-400 text-xs">
+                            <i class="ph ph-upload-simple text-lg"></i>
+                            <p>或上傳自訂音訊</p>
+                        </div>
+                    </div>
+
+                    <div v-else class="bg-dark border border-slate-600 rounded-lg p-3">
+                        <div class="flex justify-between items-center mb-2">
+                            <div class="flex items-center gap-2 overflow-hidden">
+                                <i class="ph ph-file-audio text-primary"></i>
+                                <span class="text-xs text-slate-300 truncate">{{ promptFile.name }}</span>
+                            </div>
+                            <button @click="clearPrompt" class="text-slate-500 hover:text-red-400 p-1">
+                                <i class="ph ph-x"></i>
+                            </button>
+                        </div>
+                        <audio ref="previewPlayer" controls class="w-full h-8 custom-audio" v-if="previewUrl">
+                            <source :src="previewUrl" type="audio/wav">
+                        </audio>
+                    </div>
+
+                    <!-- 預覽伺服器範例 -->
+                    <div v-if="!promptFile && serverPromptPath" class="mt-2">
+                        <audio controls class="w-full h-8 custom-audio" :key="serverPromptPath">
+                            <source :src="'/' + serverPromptPath" type="audio/wav">
+                        </audio>
+                    </div>
+                </div>
+
+                <!-- 參數設定 -->
+                <div class="space-y-4">
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-xs text-slate-400">語速</label>
+                            <span class="text-xs text-primary font-mono">{{ speed.toFixed(1) }}x</span>
+                        </div>
+                        <input type="range" v-model.number="speed" min="0.5" max="2.0" step="0.1" class="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb">
+                    </div>
+
+                    <div>
+                        <div class="flex justify-between mb-1">
+                            <label class="text-xs text-slate-400">隨機種子</label>
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs text-primary font-mono">{{ seed === -1 ? '隨機' : seed }}</span>
+                                <button @click="randomSeed" class="text-slate-500 hover:text-primary text-xs">
+                                    <i class="ph ph-dice-five"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <input type="range" v-model.number="seed" min="-1" max="100000000" step="1" class="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer slider-thumb">
+                    </div>
+                </div>
+            </div>
+
+            <div class="p-4 border-t border-slate-700 text-center">
+                <p class="text-xs text-slate-600">CosyVoice3 跨語種複刻 API</p>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 flex flex-col h-full relative">
+            <div class="flex-1 p-8 overflow-y-auto custom-scrollbar pb-32">
+                <div class="max-w-4xl mx-auto w-full">
+                    <h2 class="text-lg font-medium text-white mb-4 flex items-center gap-2">
+                        <i class="ph ph-text-t"></i> 輸入文字
+                    </h2>
+                    <div class="relative group">
+                        <textarea
+                            v-model="inputText"
+                            class="w-full h-64 bg-surface border border-slate-700 rounded-xl p-6 text-lg leading-relaxed text-slate-200 focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all resize-none shadow-lg placeholder-slate-600"
+                            placeholder="請在此輸入您想要合成的文字內容..."
+                        ></textarea>
+                        <div class="absolute bottom-4 right-4 text-xs text-slate-500">
+                            {{ inputText.length }} 字
+                        </div>
+                    </div>
+
+                    <div class="mt-6 flex justify-end gap-4">
+                        <button @click="inputText = ''" class="px-4 py-2 text-slate-400 hover:text-white transition-colors text-sm">
+                            清除
+                        </button>
+                        <button
+                            @click="generate"
+                            :disabled="isGenerating || !inputText.trim()"
+                            class="bg-gradient-to-r from-primary to-secondary hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed text-white px-8 py-3 rounded-lg font-semibold shadow-lg shadow-primary/20 flex items-center gap-2 transition-all transform active:scale-95">
+                            <i v-if="isGenerating" class="ph ph-spinner animate-spin text-xl"></i>
+                            <i v-else class="ph ph-play-circle text-xl"></i>
+                            {{ isGenerating ? '生成中...' : '開始合成' }}
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 底部播放器 -->
+            <div class="h-80 bg-surface border-t border-slate-700 shadow-[0_-4px_20px_rgba(0,0,0,0.3)] z-10 flex flex-col">
+                <div class="h-24 bg-dark/50 relative group cursor-pointer" @click="togglePlay">
+                    <div id="waveform" class="w-full h-full pointer-events-none"></div>
+
+                    <div class="absolute inset-0 flex items-center justify-center pointer-events-none" v-if="!currentAudioUrl">
+                        <p class="text-slate-600 text-sm">等待生成音訊...</p>
+                    </div>
+
+                    <div v-if="currentAudioUrl"
+                         class="absolute inset-0 flex items-center justify-center transition-opacity duration-300"
+                         :class="isPlaying ? 'opacity-0 group-hover:opacity-100' : 'opacity-100 bg-black/20'">
+                        <button class="bg-white/10 backdrop-blur-sm rounded-full p-4 hover:bg-white/20 hover:scale-110 transition-all transform shadow-lg border border-white/10">
+                            <i :class="isPlaying ? 'ph-pause-fill' : 'ph-play-fill'" class="ph text-white text-3xl"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 歷史記錄 -->
+                <div class="flex-1 overflow-hidden flex flex-col">
+                    <div class="px-6 py-3 border-b border-slate-700 flex justify-between items-center bg-surface">
+                        <h3 class="text-sm font-semibold text-slate-300 flex items-center gap-2">
+                            <i class="ph ph-clock-counter-clockwise"></i> 生成歷史
+                        </h3>
+                        <button @click="history = []" class="text-xs text-slate-500 hover:text-red-400">清空歷史</button>
+                    </div>
+                    <div class="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2">
+                        <div v-for="(item, idx) in history" :key="idx"
+                             class="bg-dark/50 hover:bg-dark border border-slate-700/50 rounded-lg p-3 flex items-center gap-4 cursor-pointer transition-colors group"
+                             :class="{'border-primary/50 bg-dark': currentAudioUrl === item.url}"
+                             @click="playHistory(item)">
+
+                            <div class="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-slate-400 text-xs font-mono">
+                                {{ history.length - idx }}
+                            </div>
+
+                            <div class="flex-1 min-w-0">
+                                <p class="text-sm text-slate-200 truncate">{{ item.text }}</p>
+                                <p class="text-xs text-slate-500 mt-0.5 flex gap-3">
+                                    <span><i class="ph ph-clock"></i> {{ item.time }}</span>
+                                    <span><i class="ph ph-timer"></i> {{ item.duration }}s</span>
+                                </p>
+                            </div>
+
+                            <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <a :href="item.url" :download="`tts_${item.id}.wav`" class="p-2 text-slate-400 hover:text-primary hover:bg-white/5 rounded" @click.stop>
+                                    <i class="ph ph-download-simple"></i>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const { createApp, ref, onMounted } = Vue;
+
+        createApp({
+            setup() {
+                const inputText = ref("我是通義實驗室語音團隊全新推出的生成式語音大模型，提供舒適自然的語音合成能力。");
+                const isGenerating = ref(false);
+                const models = ref([]);
+                const selectedModel = ref("");
+                const loadingModel = ref(false);
+                const promptFile = ref(null);
+                const previewUrl = ref(null);
+                const serverPromptPath = ref("asset/Hayley.wav");
+                const currentAudioUrl = ref(null);
+                const isPlaying = ref(false);
+                const wavesurfer = ref(null);
+                const history = ref([]);
+                const speed = ref(1.0);
+                const seed = ref(-1);
+
+                onMounted(async () => {
+                    wavesurfer.value = WaveSurfer.create({
+                        container: '#waveform',
+                        waveColor: '#475569',
+                        progressColor: '#10b981',
+                        cursorColor: '#34d399',
+                        barWidth: 2,
+                        barGap: 1,
+                        barRadius: 2,
+                        height: 96,
+                        normalize: true,
+                    });
+
+                    wavesurfer.value.on('finish', () => isPlaying.value = false);
+                    wavesurfer.value.on('play', () => isPlaying.value = true);
+                    wavesurfer.value.on('pause', () => isPlaying.value = false);
+
+                    await fetchModels();
+                });
+
+                const fetchModels = async () => {
+                    try {
+                        const res = await fetch('/models');
+                        const data = await res.json();
+                        models.value = data.models;
+                        if (models.value.length > 0) selectedModel.value = data.current_model || models.value[0].name;
+                    } catch (e) {
+                        console.error("載入模型列表失敗", e);
+                    }
+                };
+
+                const refreshModels = async () => {
+                    await fetchModels();
+                    alert("模型列表已刷新！");
+                };
+
+                const changeModel = async () => {
+                    if (!selectedModel.value) return;
+                    loadingModel.value = true;
+                    try {
+                        await fetch('/model/reload', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ model_name: selectedModel.value })
+                        });
+                    } catch (e) {
+                        alert("模型切換失敗: " + e.message);
+                    } finally {
+                        loadingModel.value = false;
+                    }
+                };
+
+                const handleFileSelect = (e) => {
+                    if (e.target.files.length > 0) setPromptFile(e.target.files[0]);
+                };
+
+                const handleDrop = (e) => {
+                    if (e.dataTransfer.files.length > 0) setPromptFile(e.dataTransfer.files[0]);
+                };
+
+                const setPromptFile = (file) => {
+                    promptFile.value = file;
+                    if (previewUrl.value) URL.revokeObjectURL(previewUrl.value);
+                    previewUrl.value = URL.createObjectURL(file);
+                };
+
+                const clearPrompt = () => {
+                    promptFile.value = null;
+                    if (previewUrl.value) {
+                        URL.revokeObjectURL(previewUrl.value);
+                        previewUrl.value = null;
+                    }
+                };
+
+                const randomSeed = () => {
+                    seed.value = Math.floor(Math.random() * 100000000);
+                };
+
+                const generate = async () => {
+                    if (!inputText.value.trim()) return;
+
+                    if (!promptFile.value && !serverPromptPath.value) {
+                        alert("請選擇參考音訊！");
+                        return;
+                    }
+
+                    isGenerating.value = true;
+                    const startTime = Date.now();
+
+                    const formData = new FormData();
+                    formData.append('text', inputText.value);
+                    formData.append('mode', 'cross_lingual');
+                    formData.append('speed', speed.value);
+                    formData.append('seed', seed.value);
+
+                    if (promptFile.value) {
+                        formData.append('prompt_audio', promptFile.value);
+                    } else {
+                        formData.append('prompt_audio_path', serverPromptPath.value);
+                    }
+
+                    try {
+                        const res = await fetch('/tts', {
+                            method: 'POST',
+                            body: formData
+                        });
+
+                        if (!res.ok) {
+                            const err = await res.json();
+                            throw new Error(err.detail || '生成失敗');
+                        }
+
+                        const blob = await res.blob();
+                        const url = URL.createObjectURL(blob);
+
+                        currentAudioUrl.value = url;
+                        wavesurfer.value.load(url);
+                        wavesurfer.value.on('ready', () => wavesurfer.value.play());
+
+                        const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+                        history.value.unshift({
+                            id: Date.now(),
+                            text: inputText.value,
+                            url: url,
+                            time: new Date().toLocaleTimeString(),
+                            duration: duration
+                        });
+
+                    } catch (e) {
+                        alert("生成失敗: " + e.message);
+                    } finally {
+                        isGenerating.value = false;
+                    }
+                };
+
+                const togglePlay = () => {
+                    if (wavesurfer.value) wavesurfer.value.playPause();
+                };
+
+                const playHistory = (item) => {
+                    currentAudioUrl.value = item.url;
+                    wavesurfer.value.load(item.url);
+                    wavesurfer.value.on('ready', () => wavesurfer.value.play());
+                };
+
+                return {
+                    inputText, isGenerating, models, selectedModel, loadingModel,
+                    promptFile, previewUrl, serverPromptPath,
+                    currentAudioUrl, isPlaying, history, speed, seed,
+                    fetchModels, refreshModels, changeModel,
+                    handleFileSelect, handleDrop, clearPrompt, randomSeed,
+                    generate, togglePlay, playHistory
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>

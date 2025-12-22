@@ -57,7 +57,7 @@ def generate_audio(tts_text, mode_checkbox_group, sft_dropdown, prompt_text, pro
         prompt_wav = None
     # if instruct mode, please make sure that model is iic/CosyVoice-300M-Instruct and not cross_lingual mode
     if mode_checkbox_group in ['自然语言控制']:
-        if cosyvoice.instruct is False:
+        if getattr(cosyvoice, 'instruct', False) is False:
             gr.Warning('您正在使用自然语言控制模式, {}模型不支持此模式, 请使用iic/CosyVoice-300M-Instruct模型'.format(args.model_dir))
             yield (cosyvoice.sample_rate, default_data)
         if instruct_text == '':
@@ -67,7 +67,7 @@ def generate_audio(tts_text, mode_checkbox_group, sft_dropdown, prompt_text, pro
             gr.Info('您正在使用自然语言控制模式, prompt音频/prompt文本会被忽略')
     # if cross_lingual mode, please make sure that model is iic/CosyVoice-300M and tts_text prompt_text are different language
     if mode_checkbox_group in ['跨语种复刻']:
-        if cosyvoice.instruct is True:
+        if getattr(cosyvoice, 'instruct', False) is True:
             gr.Warning('您正在使用跨语种复刻模式, {}模型不支持此模式, 请使用iic/CosyVoice-300M模型'.format(args.model_dir))
             yield (cosyvoice.sample_rate, default_data)
         if instruct_text != '':
@@ -123,22 +123,27 @@ def generate_audio(tts_text, mode_checkbox_group, sft_dropdown, prompt_text, pro
 
 def main():
     with gr.Blocks() as demo:
-        gr.Markdown("### 代码库 [CosyVoice](https://github.com/FunAudioLLM/CosyVoice) \
-                    预训练模型 [CosyVoice-300M](https://www.modelscope.cn/models/iic/CosyVoice-300M) \
-                    [CosyVoice-300M-Instruct](https://www.modelscope.cn/models/iic/CosyVoice-300M-Instruct) \
-                    [CosyVoice-300M-SFT](https://www.modelscope.cn/models/iic/CosyVoice-300M-SFT)")
-        gr.Markdown("#### 请输入需要合成的文本，选择推理模式，并按照提示步骤进行操作")
+        gr.Markdown("### CosyVoice3 語音合成")
+        gr.Markdown("#### 輸入文字，選擇推理模式，點擊生成音頻")
 
-        tts_text = gr.Textbox(label="输入合成文本", lines=1, value="我是通义实验室语音团队全新推出的生成式语音大模型，提供舒适自然的语音合成能力。")
         with gr.Row():
-            mode_checkbox_group = gr.Radio(choices=inference_mode_list, label='选择推理模式', value=inference_mode_list[0])
-            instruction_text = gr.Text(label="操作步骤", value=instruct_dict[inference_mode_list[0]], scale=0.5)
-            sft_dropdown = gr.Dropdown(choices=sft_spk, label='选择预训练音色', value=sft_spk[0], scale=0.25)
+            model_dropdown = gr.Dropdown(
+                choices=model_choices,
+                label='選擇模型',
+                value=default_model_name,
+                scale=1
+            )
+
+        tts_text = gr.Textbox(label="輸入合成文本", lines=1, value="我是通義實驗室語音團隊全新推出的生成式語音大模型，提供舒適自然的語音合成能力。")
+        with gr.Row():
+            mode_checkbox_group = gr.Radio(choices=inference_mode_list, label='選擇推理模式', value=inference_mode_list[0])
+            instruction_text = gr.Text(label="操作步驟", value=instruct_dict[inference_mode_list[0]], scale=1)
+            sft_dropdown = gr.Dropdown(choices=sft_spk, label='選擇預訓練音色', value=sft_spk[0] if sft_spk else '', scale=1)
             stream = gr.Radio(choices=stream_mode_list, label='是否流式推理', value=stream_mode_list[0][1])
-            speed = gr.Number(value=1, label="速度调节(仅支持非流式推理)", minimum=0.5, maximum=2.0, step=0.1)
-            with gr.Column(scale=0.25):
+            speed = gr.Number(value=1, label="速度調節(僅支持非流式推理)", minimum=0.5, maximum=2.0, step=0.1)
+            with gr.Column(scale=1):
                 seed_button = gr.Button(value="\U0001F3B2")
-                seed = gr.Number(value=0, label="随机推理种子")
+                seed = gr.Number(value=0, label="隨機推理種子")
 
         with gr.Row():
             prompt_wav_upload = gr.Audio(sources='upload', type='filepath', label='选择prompt音频文件，注意采样率不低于16khz')
@@ -156,8 +161,51 @@ def main():
                                       seed, stream, speed],
                               outputs=[audio_output])
         mode_checkbox_group.change(fn=change_instruction, inputs=[mode_checkbox_group], outputs=[instruction_text])
+        model_dropdown.change(fn=change_model, inputs=[model_dropdown], outputs=[sft_dropdown])
     demo.queue(max_size=4, default_concurrency_limit=2)
     demo.launch(server_name='0.0.0.0', server_port=args.port)
+
+
+def scan_available_models():
+    """掃描可用的模型目錄"""
+    import glob
+    models = {}
+    # 掃描 pretrained_models 目錄下所有包含 llm.pt 的資料夾
+    for model_dir in glob.glob('pretrained_models/*/llm.pt'):
+        dir_name = os.path.dirname(model_dir)
+        display_name = os.path.basename(dir_name)
+        models[display_name] = dir_name
+
+    # 掃描訓練目錄中的 checkpoint（只顯示最新的）
+    checkpoints = sorted(glob.glob('examples/libritts/cosyvoice3/exp/cosyvoice3/llm/torch_ddp/epoch_*_whole.pt'))
+    if checkpoints:
+        latest_ckpt = checkpoints[-1]  # 只取最新的
+        epoch = os.path.basename(latest_ckpt).replace('_whole.pt', '')
+        display_name = f'訓練中-{epoch}'
+        models[display_name] = latest_ckpt
+    return models
+
+
+def load_model(model_dir):
+    """載入指定的模型"""
+    global cosyvoice, sft_spk, default_data
+    logging.info(f'Loading model from {model_dir}')
+    cosyvoice = AutoModel(model_dir=model_dir)
+    sft_spk = cosyvoice.list_available_spks()
+    if len(sft_spk) == 0:
+        sft_spk = ['']
+    default_data = np.zeros(cosyvoice.sample_rate)
+    return sft_spk
+
+
+def change_model(model_name):
+    """切換模型"""
+    if model_name in available_models:
+        model_dir = available_models[model_name]
+        new_spks = load_model(model_dir)
+        gr.Info(f'已切換到模型: {model_name}')
+        return gr.update(choices=new_spks, value=new_spks[0] if new_spks else '')
+    return gr.update()
 
 
 if __name__ == '__main__':
@@ -170,6 +218,17 @@ if __name__ == '__main__':
                         default='pretrained_models/CosyVoice3-0.5B',
                         help='local path or modelscope repo id')
     args = parser.parse_args()
+
+    # 掃描可用模型
+    available_models = scan_available_models()
+    model_choices = list(available_models.keys())
+
+    # 設定預設模型
+    default_model_name = os.path.basename(args.model_dir)
+    if default_model_name not in model_choices:
+        model_choices.insert(0, default_model_name)
+        available_models[default_model_name] = args.model_dir
+
     cosyvoice = AutoModel(model_dir=args.model_dir)
 
     sft_spk = cosyvoice.list_available_spks()

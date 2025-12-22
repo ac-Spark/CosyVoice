@@ -1,0 +1,42 @@
+services:
+  cosyvoice3-train:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: cosyvoice3:latest
+    container_name: cosyvoice3-train
+    runtime: nvidia
+    shm_size: "16gb"
+    environment:
+      - PYTHONPATH=/workspace/CosyVoice:/workspace/CosyVoice/third_party/Matcha-TTS
+    volumes:
+      # 程式碼掛載（覆蓋 container 內 git clone 的版本）
+      - .:/workspace/CosyVoice
+
+      # 資料集目錄（掛載你的 split_dataset 目錄）
+      - /mnt/data/split_dataset1119:/workspace/CosyVoice/data
+
+      # 預訓練模型目錄
+      - ./pretrained_models:/workspace/CosyVoice/pretrained_models
+
+      # 訓練輸出目錄（持久化保存）
+      - ./exp:/workspace/CosyVoice/exp
+      - ./tensorboard:/workspace/CosyVoice/tensorboard
+    working_dir: /workspace/CosyVoice
+    stdin_open: true
+    tty: true
+    ports:
+      - "7857:7857"  # API Server
+      - "7858:7858"  # Gradio WebUI
+      - "6007:6007"  # TensorBoard
+    entrypoint: ["/bin/bash", "/workspace/CosyVoice/scripts/docker-entrypoint.sh"]
+    command: ["bash", "/workspace/CosyVoice/scripts/start_all.sh"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${GPU_IDS:-2,3,4,5,6,7}"]
+              capabilities: [gpu]
+    restart: unless-stopped
+

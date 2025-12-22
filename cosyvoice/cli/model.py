@@ -61,13 +61,21 @@ class CosyVoiceModel:
         self.flow_cache_dict = {}
         self.hift_cache_dict = {}
 
+    def _clean_state_dict(self, state_dict):
+        """移除訓練 checkpoint 中的非模型參數 key（epoch, step 等）"""
+        keys_to_remove = {'epoch', 'step', 'optimizer', 'scheduler', 'scaler'}
+        return {k: v for k, v in state_dict.items() if k not in keys_to_remove}
+
     def load(self, llm_model, flow_model, hift_model):
-        self.llm.load_state_dict(torch.load(llm_model, map_location=self.device), strict=True)
+        llm_state = self._clean_state_dict(torch.load(llm_model, map_location=self.device))
+        self.llm.load_state_dict(llm_state, strict=True)
         self.llm.to(self.device).eval()
-        self.flow.load_state_dict(torch.load(flow_model, map_location=self.device), strict=True)
+        flow_state = self._clean_state_dict(torch.load(flow_model, map_location=self.device))
+        self.flow.load_state_dict(flow_state, strict=True)
         self.flow.to(self.device).eval()
         # in case hift_model is a hifigan model
         hift_state_dict = {k.replace('generator.', ''): v for k, v in torch.load(hift_model, map_location=self.device).items()}
+        hift_state_dict = self._clean_state_dict(hift_state_dict)
         self.hift.load_state_dict(hift_state_dict, strict=True)
         self.hift.to(self.device).eval()
 
