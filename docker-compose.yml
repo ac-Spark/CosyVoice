@@ -14,7 +14,7 @@ services:
       - .:/workspace/CosyVoice
 
       # 資料集目錄（掛載你的 split_dataset 目錄）
-      - /mnt/data/split_dataset1119:/workspace/CosyVoice/data
+      - /mnt/data/split_dataset_naer/:/workspace/CosyVoice/data
 
       # 預訓練模型目錄
       - ./pretrained_models:/workspace/CosyVoice/pretrained_models
