@@ -27,7 +27,7 @@ services:
     tty: true
     ports:
       - "7857:7857"  # API Server
-      - "7858:7858"  # Gradio WebUI
+      # - "7858:7858"  # Gradio WebUI
       - "6007:6007"  # TensorBoard
     entrypoint: ["/bin/bash", "/workspace/CosyVoice/scripts/docker-entrypoint.sh"]
     command: ["bash", "/workspace/CosyVoice/scripts/start_all.sh"]
@@ -36,7 +36,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["${GPU_IDS:-2,3,4,5,6,7}"]
+              # device_ids: ["${GPU_IDS:-2,3,4,5,6,7}"]
               capabilities: [gpu]
     restart: unless-stopped
 
