@@ -14,6 +14,14 @@ echo "========================================"
 echo "  CosyVoice3 容器初始化"
 echo "========================================"
 
+# 初始化 git submodule（Matcha-TTS）
+if [ ! -f "/workspace/CosyVoice/third_party/Matcha-TTS/setup.py" ]; then
+    echo "[INFO] 初始化 git submodule..."
+    git config --global --add safe.directory /workspace/CosyVoice
+    cd /workspace/CosyVoice
+    git submodule update --init --recursive || echo "[WARN] git submodule 初始化失敗，請手動執行"
+fi
+
 MODEL_DIR="/workspace/CosyVoice/pretrained_models/CosyVoice3-0.5B"
 MODEL_SOURCE="${MODEL_SOURCE:-huggingface}"
 

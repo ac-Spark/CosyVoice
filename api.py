@@ -88,7 +88,7 @@ def initialize_tts():
 
     logging.info(f"正在初始化 CosyVoice3 引擎 (模型: {model_dir})...")
     try:
-        cosyvoice = AutoModel(model_dir=model_dir)
+        cosyvoice = AutoModel(model_dir=model_dir, fp16=True)
         sft_spk = cosyvoice.list_available_spks()
         if len(sft_spk) == 0:
             sft_spk = ['']
